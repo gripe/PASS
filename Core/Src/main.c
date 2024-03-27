@@ -23,6 +23,12 @@
 /* USER CODE BEGIN Includes */
 #include "math.h"
 #include "arm_math.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+//#include "stm32f7xx_ll_usart.h"
+//#include "stm32f7xx_hal.h"
+#include "stm32f7xx_hal_uart.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -86,6 +92,27 @@ q15_t fft_out_buf_mag[300*2];
 q15_t ifft_out_buf[300];
 float audio_buf_high_f[300];
 
+// UART SERIAL COMMUNICATION
+UART_HandleTypeDef huart3;
+//volatile uint8_t receivedData;
+volatile char receivedData;
+// uint64_t counter = 0;
+#define MAX_COMMAND_LENGTH 100
+char commandBuffer[MAX_COMMAND_LENGTH];
+int commandLength = 0;
+int USB_input_X = 0;
+int USB_input_Y = 0;
+int USB_input_Dist = 0;
+int USB_input_Vol = 0;
+// TEST
+uint8_t uart3_rx_byte;
+
+// Function prototypes
+static void MX_USART3_UART_Init(void);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+
+
+
 /* Reference index at which max energy of bin ocuurs */
 uint32_t refIndex = 213, testIndex = 0;
 /* --------------------------------------
@@ -132,7 +159,7 @@ void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai) {
 	static int circ_offset_low = 0;
 	static int circ_offset_high = 0;
 	static int delay_nom = 0;
-	static int counter = 0;
+	// static int counter = 0;
 
 
 //	if (counter % 300 == 0) {
@@ -271,6 +298,79 @@ void write_DAC2(uint8_t reg, uint8_t* data) {
 	}
 }
 
+
+// UART INTERRUPT SERIAL COM
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	// ECHO TEST
+	//if (huart->Instance == USART3) // Check if the interrupt comes from UART3
+	    //{
+			//char uit[24] = "TEST 1234 !!!!\r\n";
+			//HAL_UART_Transmit(&huart3, uit, strlen((char*)uit), HAL_MAX_DELAY);
+	        // Echo the received byte back
+	        //HAL_UART_Transmit(&huart3, (uint8_t *)&uart3_rx_byte, 1, 10);
+
+	        // Re-enable the UART receive interrupt
+	        //HAL_UART_Receive_IT(&huart3, (uint8_t *)&uart3_rx_byte, 1);
+	    //}
+
+    if (huart->Instance == USART3)  // Check which UART generated the interrupt (3)
+    {
+        // Append the received character to the buffer, if it's not the newline
+        // Also check if we haven't exceeded our buffer size (100 for now)
+        if (receivedData != '\n' && commandLength < MAX_COMMAND_LENGTH - 1)
+        {
+            commandBuffer[commandLength++] = receivedData;
+        }
+        else if (receivedData == '\n')  // Received a newline character
+        {
+            // Ensure the string is null-terminated
+            commandBuffer[commandLength] = '\0';
+
+            if (commandLength > 0) {  // Check if there's something to process
+
+            	// Test print
+                char response[MAX_COMMAND_LENGTH + 20];  // Allocate enough space for response message
+                sprintf(response, "Received command: %s\n", commandBuffer);
+                HAL_UART_Transmit(&huart3, (uint8_t*)response, strlen(response), HAL_MAX_DELAY);
+
+                // // // PROCESS COMMAND HERE // // //
+
+                if (commandBuffer[0] == 'T' && commandLength == 1){
+                    HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
+                }
+
+                else if (strncmp(commandBuffer, "setX ", 5) == 0) {
+                    // USB_input_X
+                    USB_input_X = atoi(&commandBuffer[5]);
+                    // I tested this, and it seems to be working:
+                    //char debugInput[20];
+                    //sprintf(debugInput, "X set to: %d\n", USB_input_X);
+                    //HAL_UART_Transmit(&huart3, (uint8_t*)debugInput, strlen(debugInput), HAL_MAX_DELAY);
+                } else if (strncmp(commandBuffer, "setY ", 5) == 0) {
+                    // USB_input_Y
+                    USB_input_Y = atoi(&commandBuffer[5]);
+                } else if (strncmp(commandBuffer, "setDistance ", 12) == 0) {
+                    // USB_input_Dist
+                    USB_input_Dist = atoi(&commandBuffer[12]);
+                } else if (strncmp(commandBuffer, "setVolume ", 10) == 0) {
+                    // USB_input_Vol
+                    // USB_input_Vol = atoi(&commandBuffer[10]);
+                }
+
+            }
+
+            // Reset the buffer and counter for the next command
+            memset(commandBuffer, 0, MAX_COMMAND_LENGTH);
+            commandLength = 0;
+        }
+
+        // Prepare to receive the next character regardless
+        HAL_UART_Receive_IT(&huart3, (uint8_t*)&receivedData, 1);
+    }
+}
+
+
 /* USER CODE END 0 */
 
 /**
@@ -311,8 +411,7 @@ int main(void)
   MX_SAI1_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-
-
+  HAL_UART_Receive_IT(&huart3, (uint8_t *)&uart3_rx_byte, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -328,19 +427,15 @@ int main(void)
   sprintf(error_msg, "Error is %d on DMA1\r\n", error);
   HAL_UART_Transmit(&huart3, error_msg, strlen((char*)error_msg), HAL_MAX_DELAY);
 
-
   error = HAL_SAI_Transmit_DMA(&hsai_BlockB1, (uint32_t * )&sai_fifo_b, 16);
   sprintf(error_msg, "Error is %d on DMA2\r\n", error);
   HAL_UART_Transmit(&huart3, error_msg, strlen((char*)error_msg), HAL_MAX_DELAY);
 
   //HAL_Delay(1000);
 
-
-
   sprintf(error_msg, "UART good!\r\n");
 
   HAL_UART_Transmit(&huart3, error_msg, strlen((char*)error_msg), HAL_MAX_DELAY);
-
 
   write_DAC1(PLL_CLK_CTRL0, &pll_clk_data);
   write_DAC1(DAC_MUTE1, &mute1_data_DAC1);
@@ -351,16 +446,15 @@ int main(void)
 
   write_DAC2(PLL_CLK_CTRL0, &pll_clk_data);
   write_DAC2(DAC_MUTE1, &mute1_data_DAC2);
-    write_DAC2(DAC_MUTE2, &mute2_data_DAC2);
-write_DAC2(DAC_CTRL0, &dac_ctrl0);
-write_DAC2(DAC_CTRL1, &dac_ctrl1);
-write_DAC2(DAC_CTRL2, &dac_ctrl2);
-
+  write_DAC2(DAC_MUTE2, &mute2_data_DAC2);
+  write_DAC2(DAC_CTRL0, &dac_ctrl0);
+  write_DAC2(DAC_CTRL1, &dac_ctrl1);
+  write_DAC2(DAC_CTRL2, &dac_ctrl2);
 
   __enable_irq();
 
-
-
+  // Start reception with interrupt
+  HAL_UART_Receive_IT(&huart3, &receivedData, 1);
   while (1)
   {
 
@@ -755,7 +849,7 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
@@ -787,6 +881,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LD2_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LD2_GPIO_Port, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
